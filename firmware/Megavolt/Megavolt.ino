@@ -5,6 +5,9 @@
 
 #define REFERENCE_FREQUENCY 2000 // Desired update frequency in Hz
 
+#define INVALID_NOTE 128
+#define NOTE_MEM_SIZE 4
+
 // Precalc timer settings
 #define TIMER_COUNT F_CPU / REFERENCE_FREQUENCY
 #define PRESCALE_VALUE 32
@@ -15,6 +18,9 @@
 #define DAC_CHANNEL_A 0
 #define DAC_CHANNEL_B 1
 
+// MIDI Controller #
+#define MIDI_CC_MODWHEEL 1
+#define MIDI_CC_AFTERTOUCH 4
 struct dac_cv
 {
 	int32_t target = 0;
@@ -25,18 +31,23 @@ struct dac_cv
 dac_cv CV_1, CV_2;
 
 // PWM CV (8-bit) outs
-#define CV_3 OCR1A // ATmega pin 6
-#define CV_4 OCR1B // ATmega pin 5
-#define CV_5 OCR0A // ATmega pin 9
-#define CV_6 OCR0B // ATmega pin 10
+#define CV_3 OCR1A // ATmega pin 15
+#define CV_4 OCR0A // ATmega pin 12
+#define CV_5 OCR1B // ATmega pin 16
+#define CV_6 OCR0B // ATmega pin 11
+
+#define CV_VELOCITY CV_6
+#define CV_ATOUCH CV_5
+#define CV_MODWHEEL CV_4
+#define CV_CUSTOM CV_3
 
 // TODO: More gates?
-#define GATE_BIT 0x08
-#define CLOCK_BIT 0x10
+#define GATE_BIT 0x20
+#define CLOCK_BIT 0x01
 
 #define DAC_SS_BIT 0x02
 
-uint8_t note_list[256];
+uint8_t note_list[NOTE_MEM_SIZE];
 uint8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
 uint8_t midi_channel = 1; // TODO: Make this adjustable, auto-detect on first incoming note?
@@ -51,8 +62,8 @@ void setup()
 	pinMode(8, OUTPUT);
 
 	// GATE outputs
+	pinMode(A5, OUTPUT);
 	pinMode(A3, OUTPUT);
-	pinMode(A4, OUTPUT);
 
 	MIDI.setHandleNoteOn(midi_note_on);
 	MIDI.setHandleNoteOff(midi_note_off);
@@ -118,24 +129,42 @@ int find_last_note()
 
 void midi_note_on(byte channel, byte note, byte velocity)
 {
-	CV_6 = velocity << 1;
+	CV_VELOCITY = velocity << 1;
 	PORTC |= GATE_BIT;
-
+  
+  note_list[num_playing_notes++] = note;
+  
 	CV_1.target = uint32_t(note) << 24; // Convert 7-bit MIDI message to 32-bit internal format
 
-	// Reset glide
-	if (num_playing_notes <= 0)
-		CV_1.current = CV_1.target;
-
-	num_playing_notes++;
-
+   // Reset glide if no notes were playing
+  if (num_playing_notes == 1) {
+    CV_1.current = CV_1.target;
+  }
 };
 
-void midi_note_off(byte channel, byte pitch, byte velocity)
+void midi_note_off(byte channel, byte note, byte velocity)
 {
-	num_playing_notes--;
+  uint8_t found = 0;
+  
+  // Find the note that was turned off
+  for (int i = 0; i < num_playing_notes; i++) {
+    if (note_list[i] == note) {
+      found = 1;
+    }
+    // We found the note, so move everything above it down by one.
+    if (found && i < num_playing_notes - 1) {
+      note_list[i] = note_list[i + 1];
+    }
+  }
+  num_playing_notes--;
 
-	if (num_playing_notes <= 0)
+  // Play the top note in list
+  if (num_playing_notes > 0) {
+    CV_1.target = uint32_t(note_list[num_playing_notes - 1]) << 24;
+  } 
+
+  // Turn GATE off
+  else if (num_playing_notes <= 0)
 	{
 		num_playing_notes = 0;
 		PORTC &= ~GATE_BIT;
@@ -144,10 +173,10 @@ void midi_note_off(byte channel, byte pitch, byte velocity)
 
 void midi_cc(byte channel, byte CC, byte value)
 {
-	if (channel == midi_channel && CC == 01)
-		CV_3 = value << 1;
-	else if (channel == midi_channel && CC == 04)
-		CV_4 = value << 1;
+	if (channel == midi_channel && CC == MIDI_CC_MODWHEEL)
+		CV_MODWHEEL = value << 1;
+	else if (channel == midi_channel && CC == MIDI_CC_AFTERTOUCH)
+		CV_ATOUCH = value << 1;
 }
 
 void midi_clock()
@@ -187,4 +216,3 @@ void loop()
 {
 	MIDI.read();
 }
-
