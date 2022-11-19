@@ -1,0 +1,5 @@
+(sym_lib_table
+  (lib (name "Megavolt_Rev2-eagle-import")(type "Legacy")(uri "${KIPRJMOD}/Megavolt_Rev2-eagle-import.lib")(options "")(descr ""))
+  (lib (name "DDB_Prototype_HW")(type "Legacy")(uri "C:/Users/deeps/Documents/Dev/DDB_Firmware/Hardware/DDB_Prototype_HW/DDB_Prototype_HW.lib")(options "")(descr ""))
+  (lib (name "Megavolt-Rev2-rescue")(type "Legacy")(uri "${KIPRJMOD}/Megavolt Rev2-rescue.lib")(options "")(descr ""))
+)
