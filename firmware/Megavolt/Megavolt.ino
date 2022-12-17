@@ -36,19 +36,23 @@ dac_cv CV_1, CV_2;
 #define CV_5 OCR1B // ATmega pin 16
 #define CV_6 OCR0B // ATmega pin 11
 
-#define CV_VELOCITY CV_6
-#define CV_ATOUCH CV_5
-#define CV_MODWHEEL CV_4
-#define CV_CUSTOM CV_3
+#define CV_VELOCITY CV_3
+#define CV_ATOUCH CV_4
+#define CV_MODWHEEL CV_5
+#define CV_CUSTOM CV_6
 
 // TODO: More gates?
-#define GATE_BIT 0x20
-#define CLOCK_BIT 0x01
+//#define GATE_BIT 0x02 // GATE 4
+//#define GATE_BIT 0x20 // GATE 3
+#define GATE_BIT 0x08 // GATE 2
+//#define GATE_BIT 0x04 // GATE 1
+
+#define CLOCK_BIT 0x20
 
 #define DAC_SS_BIT 0x02
 
 uint8_t note_list[NOTE_MEM_SIZE];
-uint8_t num_playing_notes = 0;
+int8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
 uint8_t midi_channel = 1; // TODO: Make this adjustable, auto-detect on first incoming note?
 uint8_t glide_amount = 0;
@@ -62,8 +66,11 @@ void setup()
 	pinMode(8, OUTPUT);
 
 	// GATE outputs
-	pinMode(A5, OUTPUT);
+  pinMode(A0, INPUT);
+	pinMode(A1, OUTPUT);
+	pinMode(A2, OUTPUT);
 	pinMode(A3, OUTPUT);
+  pinMode(A5, OUTPUT);
 
 	MIDI.setHandleNoteOn(midi_note_on);
 	MIDI.setHandleNoteOff(midi_note_off);
@@ -181,11 +188,14 @@ void midi_cc(byte channel, byte CC, byte value)
 
 void midi_clock()
 {
-	clock_counter++;
+  clock_counter++;
 	if (clock_counter % 12 == 0)
 	{
-		PINC |= CLOCK_BIT;
-	}
+		PORTC |= CLOCK_BIT;
+    clock_counter = 0;
+  } else {
+  PORTC &= ~CLOCK_BIT;
+  }
 }
 
 //NOTE: Pitchbend range is -8192 -> 8191 (14-bit MIDI message)
@@ -195,6 +205,7 @@ void midi_pitchbend(byte channel, int value)
 	bend = value >> 6; // Shift to 8-bit internal resolution (for reasonable pbend range)
 }
 
+// TODO/IDEA: DAC config for each channel could be held in a variable and OR:ed with the data instead of all these shifts every tick?
 inline void write_dac(uint16_t value, uint8_t channel)
 {
 	PORTB &= ~B00000001; // Set SS pin low
@@ -209,7 +220,8 @@ ISR(TIMER2_COMPA_vect) // 2KHz update freq.
 	write_dac(CV_2.target, DAC_CHANNEL_B);
 
 	// Do note glide
-	CV_1.current += int32_t(CV_1.target - CV_1.current) / (analogRead(A0) + 1);
+  int32_t glide = 1 + (analogRead(A0) << 4);
+  CV_1.current += (CV_1.target - CV_1.current) / glide;
 }
 
 void loop()
