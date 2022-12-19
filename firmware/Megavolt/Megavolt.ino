@@ -54,9 +54,11 @@ dac_cv CV_1, CV_2;
 uint8_t note_list[NOTE_MEM_SIZE];
 int8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
-uint8_t midi_channel = 1; // TODO: Make this adjustable, auto-detect on first incoming note?
+uint8_t midi_channel = 0; // TODO: Make this adjustable, auto-detect on first incoming note?
 uint8_t glide_amount = 0;
 int16_t bend = 0;
+
+uint8_t playing = 0;
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
@@ -75,6 +77,8 @@ void setup()
 	MIDI.setHandleNoteOn(midi_note_on);
 	MIDI.setHandleNoteOff(midi_note_off);
 	MIDI.setHandleClock(midi_clock);
+  MIDI.setHandleStart(midi_start);
+  MIDI.setHandleStop(midi_stop);
 	MIDI.setHandleControlChange(midi_cc);
 	MIDI.setHandlePitchBend(midi_pitchbend);
 
@@ -127,15 +131,44 @@ void setup()
 //	OCR2B = 64; // Set PWM duty cycle
 
 	num_playing_notes = 0;
+
+  // Set CV_2 (pitchbend) to default midrange value
+  CV_2.target = CV_2.current = 2048;
 }
 
-int find_last_note()
+void midi_start()
 {
-	return 0; // TODO: Implement
+  playing = 1;
+  clock_counter = 24; // Initialize the counter on the first beat
+  num_playing_notes = 0;
+  // Make sure gates are off
+  PORTC &= ~CLOCK_BIT;
+  PORTC &= ~GATE_BIT;
+}
+
+void midi_stop()
+{
+  playing = 0;
+  // Reset clock counter and note memory
+  num_playing_notes = 0;
+  clock_counter = 0;
+
+  // Turn off gates
+  PORTC &= ~CLOCK_BIT;
+  PORTC &= ~GATE_BIT;
 }
 
 void midi_note_on(byte channel, byte note, byte velocity)
 {
+  // Auto-detect channel on first incoming note and set it,
+  // then ignore messages on other channels
+  if(midi_channel != channel) {
+    if(midi_channel == 0) {
+      midi_channel = channel;
+    } else {
+      return;
+    }
+  }
 	CV_VELOCITY = velocity << 1;
 	PORTC |= GATE_BIT;
   
@@ -186,22 +219,35 @@ void midi_cc(byte channel, byte CC, byte value)
 		CV_ATOUCH = value << 1;
 }
 
+// NOTE: MIDI sends 24 clock pulses per quarter note. That's 6 pulses per 16th, or 96 pulses per beat
 void midi_clock()
 {
-  clock_counter++;
-	if (clock_counter % 12 == 0)
-	{
+  // The midi_start() callback starts at 24, so the first tick is on the first beat
+   
+  // If we've counted 24 pulses (1/4th note), toggle the clock pin high for the next pulse
+	if (clock_counter % 24 == 0 && playing) {
 		PORTC |= CLOCK_BIT;
     clock_counter = 0;
+  // Keep the pin normally low
   } else {
-  PORTC &= ~CLOCK_BIT;
+    PORTC &= ~CLOCK_BIT;
   }
+
+  // If we've counted a 16th (every 6 pulses), toggle the 16th pin high for the next pulse
+  if (clock_counter % 6 == 0 && playing) {
+    // TODO: Toggle 16th pin
+  }
+  else {
+    // TODO: Keep the 16th pin normally low
+  }
+
+  clock_counter++;
 }
 
 //NOTE: Pitchbend range is -8192 -> 8191 (14-bit MIDI message)
 void midi_pitchbend(byte channel, int value)
 {
-//	CV_2.target = (value + 8192); // NOTE/TODO: Use this for hardware pitchbend?
+	CV_2.target = (value + 8192) >> 2; // Make unsigned and shift to 12-bit for DAC out
 	bend = value >> 6; // Shift to 8-bit internal resolution (for reasonable pbend range)
 }
 
@@ -216,7 +262,8 @@ inline void write_dac(uint16_t value, uint8_t channel)
 // TODO: Profile ISR, it needs to work at a few KHz at least
 ISR(TIMER2_COMPA_vect) // 2KHz update freq.
 {
-	write_dac((CV_1.current >> 19) + bend,  DAC_CHANNEL_A); // Shift back to 12 bits for DAC output and add pitchbend
+  // TODO: HW switch for bend applied to pitch
+	write_dac((CV_1.current >> 19)/* + bend */,  DAC_CHANNEL_A); // Shift back to 12 bits for DAC output and add pitchbend
 	write_dac(CV_2.target, DAC_CHANNEL_B);
 
 	// Do note glide
