@@ -54,7 +54,7 @@ dac_cv CV_1, CV_2;
 uint8_t note_list[NOTE_MEM_SIZE];
 int8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
-uint8_t midi_channel = 0; // TODO: Make this adjustable, auto-detect on first incoming note?
+uint8_t midi_channel = 1; // TODO: Make this adjustable, auto-detect on first incoming note?
 uint8_t glide_amount = 0;
 int16_t bend = 0;
 
@@ -162,6 +162,7 @@ void midi_note_on(byte channel, byte note, byte velocity)
 {
   // Auto-detect channel on first incoming note and set it,
   // then ignore messages on other channels
+  /*
   if(midi_channel != channel) {
     if(midi_channel == 0) {
       midi_channel = channel;
@@ -169,6 +170,7 @@ void midi_note_on(byte channel, byte note, byte velocity)
       return;
     }
   }
+  */
 	CV_VELOCITY = velocity << 1;
 	PORTC |= GATE_BIT;
   
