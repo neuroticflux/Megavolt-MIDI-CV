@@ -41,20 +41,17 @@ dac_cv CV_1, CV_2;
 #define CV_MODWHEEL CV_5
 #define CV_CUSTOM CV_6
 
-// TODO: More gates?
-//#define GATE_BIT 0x02 // GATE 4
-//#define GATE_BIT 0x20 // GATE 3
-#define GATE_BIT 0x08 // GATE 2
-//#define GATE_BIT 0x04 // GATE 1
-
-#define CLOCK_BIT 0x20
+// Gates
+#define GATE_BIT 0x08 // GATE
+#define CLOCK_BIT 0x20 // 1/1'
+#define CLOCK16_BIT 0x04 // 1/16'
 
 #define DAC_SS_BIT 0x02
 
 uint8_t note_list[NOTE_MEM_SIZE];
 int8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
-uint8_t midi_channel = 1; // TODO: Make this adjustable, auto-detect on first incoming note?
+uint8_t midi_channel = 0; // TODO: Make this adjustable, auto-detect on first incoming note?
 uint8_t glide_amount = 0;
 int16_t bend = 0;
 
@@ -143,6 +140,7 @@ void midi_start()
   num_playing_notes = 0;
   // Make sure gates are off
   PORTC &= ~CLOCK_BIT;
+  PORTC &= ~CLOCK16_BIT;
   PORTC &= ~GATE_BIT;
 }
 
@@ -155,6 +153,7 @@ void midi_stop()
 
   // Turn off gates
   PORTC &= ~CLOCK_BIT;
+  PORTC &= ~CLOCK16_BIT;
   PORTC &= ~GATE_BIT;
 }
 
@@ -162,7 +161,6 @@ void midi_note_on(byte channel, byte note, byte velocity)
 {
   // Auto-detect channel on first incoming note and set it,
   // then ignore messages on other channels
-  /*
   if(midi_channel != channel) {
     if(midi_channel == 0) {
       midi_channel = channel;
@@ -170,7 +168,6 @@ void midi_note_on(byte channel, byte note, byte velocity)
       return;
     }
   }
-  */
 	CV_VELOCITY = velocity << 1;
 	PORTC |= GATE_BIT;
   
@@ -238,9 +235,11 @@ void midi_clock()
   // If we've counted a 16th (every 6 pulses), toggle the 16th pin high for the next pulse
   if (clock_counter % 6 == 0 && playing) {
     // TODO: Toggle 16th pin
+    PORTC |= CLOCK16_BIT;
   }
   else {
     // TODO: Keep the 16th pin normally low
+    PORTC &= ~CLOCK16_BIT;
   }
 
   clock_counter++;
