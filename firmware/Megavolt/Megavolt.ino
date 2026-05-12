@@ -28,7 +28,7 @@ struct dac_cv
 };
 
 // DAC CV (12-bit) outs
-dac_cv CV_1, CV_2;
+volatile dac_cv CV_1, CV_2;
 
 // PWM CV (8-bit) outs
 #define CV_3 OCR1A // ATmega pin 15
@@ -42,9 +42,10 @@ dac_cv CV_1, CV_2;
 #define CV_CUSTOM CV_6
 
 // Gates
-#define GATE_BIT 0x08 // GATE
-#define CLOCK_BIT 0x20 // 1/1'
-#define CLOCK16_BIT 0x04 // 1/16'
+#define GATE_BIT 0x20     // GATE
+#define CLOCK1_BIT 0x04   // 1/1'
+#define CLOCK4_BIT 0x08    // 1/4'
+#define CLOCK16_BIT 0x02  // 1/16'
 
 #define DAC_SS_BIT 0x02
 
@@ -55,7 +56,7 @@ uint8_t midi_channel = 0; // TODO: Make this adjustable, auto-detect on first in
 uint8_t glide_amount = 0;
 int16_t bend = 0;
 
-uint8_t playing = 0;
+uint8_t playing = 1; // Default clock on makes us respond to clock pulses after reset
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
@@ -136,10 +137,11 @@ void setup()
 void midi_start()
 {
   playing = 1;
-  clock_counter = 24; // Initialize the counter on the first beat
+  clock_counter = 96; // Initialize the counter on the first beat
   num_playing_notes = 0;
   // Make sure gates are off
-  PORTC &= ~CLOCK_BIT;
+  PORTC &= ~CLOCK1_BIT;
+  PORTC &= ~CLOCK4_BIT;
   PORTC &= ~CLOCK16_BIT;
   PORTC &= ~GATE_BIT;
 }
@@ -152,13 +154,16 @@ void midi_stop()
   clock_counter = 0;
 
   // Turn off gates
-  PORTC &= ~CLOCK_BIT;
+  PORTC &= ~CLOCK1_BIT;
+  PORTC &= ~CLOCK4_BIT;
   PORTC &= ~CLOCK16_BIT;
   PORTC &= ~GATE_BIT;
 }
 
 void midi_note_on(byte channel, byte note, byte velocity)
 {
+  if (num_playing_notes >= NOTE_MEM_SIZE) return;
+
   // Auto-detect channel on first incoming note and set it,
   // then ignore messages on other channels
   if(midi_channel != channel) {
@@ -222,14 +227,21 @@ void midi_cc(byte channel, byte CC, byte value)
 void midi_clock()
 {
   // The midi_start() callback starts at 24, so the first tick is on the first beat
-   
-  // If we've counted 24 pulses (1/4th note), toggle the clock pin high for the next pulse
-	if (clock_counter % 24 == 0 && playing) {
-		PORTC |= CLOCK_BIT;
+
+  if (clock_counter % 96 == 0 && playing) {
     clock_counter = 0;
+		PORTC |= CLOCK1_BIT;
   // Keep the pin normally low
   } else {
-    PORTC &= ~CLOCK_BIT;
+    PORTC &= ~CLOCK1_BIT;
+  }
+
+  // If we've counted 24 pulses (1/4th note), toggle the clock pin high for the next pulse
+	if (clock_counter % 24 == 0 && playing) {
+		PORTC |= CLOCK4_BIT;
+  // Keep the pin normally low
+  } else {
+    PORTC &= ~CLOCK4_BIT;
   }
 
   // If we've counted a 16th (every 6 pulses), toggle the 16th pin high for the next pulse
@@ -238,7 +250,7 @@ void midi_clock()
     PORTC |= CLOCK16_BIT;
   }
   else {
-    // TODO: Keep the 16th pin normally low
+    // Keep the pin normally low
     PORTC &= ~CLOCK16_BIT;
   }
 
@@ -248,6 +260,9 @@ void midi_clock()
 //NOTE: Pitchbend range is -8192 -> 8191 (14-bit MIDI message)
 void midi_pitchbend(byte channel, int value)
 {
+  // Only respond to messages on the working channel
+  if(channel != midi_channel && midi_channel != 0) return;
+
 	CV_2.target = (value + 8192) >> 2; // Make unsigned and shift to 12-bit for DAC out
 	bend = value >> 6; // Shift to 8-bit internal resolution (for reasonable pbend range)
 }
