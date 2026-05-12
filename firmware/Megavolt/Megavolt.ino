@@ -34,10 +34,12 @@ const uint16_t glideAlphaTable[128] PROGMEM = {
   20, 19, 18, 17, 16, 15, 14, 13, 12, 12, 11, 10, 10, 9, 9, 8
 };
 
+typedef int16_t Q15;
+
 struct dac_cv
 {
-	int32_t target = 0;
-	int32_t current = 0;
+	Q15 target = 0;
+	Q15 current = 0;
 };
 
 // DAC CV (12-bit) outs
@@ -66,21 +68,33 @@ uint8_t note_list[NOTE_MEM_SIZE];
 int8_t num_playing_notes = 0;
 uint8_t clock_counter = 0;
 uint8_t midi_channel = 0; // TODO: Make this adjustable, auto-detect on first incoming note?
-uint8_t glide_amount = 0;
-int16_t bend = 0;
 
 uint8_t playing = 1; // Default clock on makes us respond to clock pulses after reset
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
-inline int32_t LPF_32bit(int32_t current, int32_t target, uint16_t alpha) {
-  int32_t diff = target - current;
-  
-  // Cast to 64-bit for the multiplication to prevent overflow
-  // (32-bit diff * 15-bit alpha exceeds 32-bit capacity)
-  int32_t delta = (int32_t)(((int64_t)diff * alpha) >> 15);
-  
-  return current + delta;
+inline Q15 LPF_OnePole_Q15(Q15 current, Q15 target, Q15 alpha)
+{
+  // Distance between current and target
+  int32_t diff = (int32_t)target - (int32_t)current;
+
+  // Scale the distance by alpha, adding half the divisor rounds to nearest instead of flooring
+  // Q15 * Q15 = Q30, so shift back down to Q15
+  int32_t delta = (diff * alpha + (1 << 14)) >> 15;
+
+  // Account for very small differences at extremes where the delta rounds to zero before we hit the target value
+  if(delta == 0 && diff != 0) {
+    delta = diff > 0 ? 1: -1;
+  }
+
+  // Move by delta
+  int32_t y = (int32_t)current + delta;
+
+  // Clamp
+  if (y > 32767) y = 32767;
+  if (y < -32768) y = -32768;
+
+  return (Q15)y;
 }
 
 void setup()
@@ -154,7 +168,7 @@ void setup()
 	num_playing_notes = 0;
 
   // Set CV_2 (pitchbend) to default midrange value
-  CV_2.target = CV_2.current = 2048;
+  CV_2.target = CV_2.current = 0;
 }
 
 void midi_start()
@@ -201,7 +215,7 @@ void midi_note_on(byte channel, byte note, byte velocity)
   
   note_list[num_playing_notes++] = note;
   
-	CV_1.target = uint32_t(note) << 24; // Convert 7-bit MIDI message to 32-bit internal format
+	CV_1.target = (Q15)(note << 8); // Convert 7-bit MIDI message to Q15
 
    // Reset glide if no notes were playing
   if (num_playing_notes == 1) {
@@ -227,7 +241,7 @@ void midi_note_off(byte channel, byte note, byte velocity)
 
   // Play the top note in list
   if (num_playing_notes > 0) {
-    CV_1.target = uint32_t(note_list[num_playing_notes - 1]) << 24;
+    CV_1.target = (Q15)(note_list[num_playing_notes - 1] << 8);
   } 
 
   // Turn GATE off
@@ -286,8 +300,7 @@ void midi_pitchbend(byte channel, int value)
   // Only respond to messages on the working channel
   if(channel != midi_channel && midi_channel != 0) return;
 
-	CV_2.target = (value + 8192) >> 2; // Make unsigned and shift to 12-bit for DAC out
-	bend = value >> 6; // Shift to 8-bit internal resolution (for reasonable pbend range)
+	CV_2.target = (Q15)value;
 }
 
 // TODO/IDEA: DAC config for each channel could be held in a variable and OR:ed with the data instead of all these shifts every tick?
@@ -301,16 +314,29 @@ inline void write_dac(uint16_t value, uint8_t channel)
 // TODO: Profile ISR, it needs to work at a few KHz at least
 ISR(TIMER2_COMPA_vect) // 2KHz update freq.
 {
+  // Pitchbend offset
+  Q15 bend_offset = CV_2.target >> 4; // Shift +/-4096 to +/-512 (2 semitones) range
   // TODO: HW switch for bend applied to pitch
-	write_dac((CV_1.current >> 19)/* + bend */,  DAC_CHANNEL_A); // Shift back to 12 bits for DAC output and add pitchbend
-	write_dac(CV_2.target, DAC_CHANNEL_B);
+
+  // Add pitch + bend and shift to 12-bit DAC range
+  int16_t pitch_out = ((int32_t)CV_1.current + bend_offset) >> 3;
+
+  // Clamp
+  if(pitch_out > 4095) pitch_out = 4095;
+  else if(pitch_out < 0) pitch_out = 0;
+
+	write_dac((uint16_t)pitch_out,  DAC_CHANNEL_A); // Shift back to 12 bits for DAC output and add pitchbend
+
+  // Shift pitchbend to output full range on DAC
+  uint16_t bend_out = (uint16_t)((CV_2.target >> 2) + 2048);
+	write_dac(bend_out, DAC_CHANNEL_B);
 
 	// Do note glide
   uint8_t glide = analogRead(A0) >> 3; 
   uint16_t alpha = pgm_read_word(&glideAlphaTable[glide]);
 
   if (glide != 0 && CV_1.current != CV_1.target) {
-    CV_1.current = LPF_32bit(CV_1.current, CV_1.target, alpha);
+    CV_1.current = LPF_OnePole_Q15(CV_1.current, CV_1.target, alpha);
   } else {
     CV_1.current = CV_1.target;
   }
