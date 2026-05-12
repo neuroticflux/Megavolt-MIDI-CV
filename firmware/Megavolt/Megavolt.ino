@@ -51,9 +51,9 @@ volatile dac_cv CV_1, CV_2;
 #define CV_5 OCR1B // ATmega pin 16
 #define CV_6 OCR0B // ATmega pin 11
 
-#define CV_VELOCITY CV_3
-#define CV_ATOUCH CV_4
-#define CV_MODWHEEL CV_5
+#define CV_VELOCITY CV_4
+#define CV_ATOUCH CV_5
+#define CV_MODWHEEL CV _3
 #define CV_CUSTOM CV_6
 
 // Gates
