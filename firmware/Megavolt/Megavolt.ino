@@ -21,6 +21,19 @@
 // MIDI Controller #
 #define MIDI_CC_MODWHEEL 1
 #define MIDI_CC_AFTERTOUCH 4
+
+// From 1ms (fastest) to 2s (slowest)
+const uint16_t glideAlphaTable[128] PROGMEM = {
+  12893, 12307, 11740, 11191, 10661, 10149, 9657, 9183, 8728, 8292, 7874, 7473, 7090, 6723, 6374, 6040,
+  5722, 5418, 5130, 4855, 4594, 4345, 4110, 3886, 3673, 3471, 3280, 3099, 2927, 2765, 2611, 2465,
+  2327, 2196, 2073, 1956, 1846, 1741, 1643, 1550, 1462, 1379, 1300, 1226, 1156, 1090, 1028, 969,
+  913, 861, 812, 765, 721, 680, 641, 604, 569, 536, 505, 476, 449, 423, 398, 375,
+  354, 333, 314, 296, 279, 263, 247, 233, 220, 207, 195, 184, 173, 163, 153, 145,
+  136, 128, 121, 114, 107, 101, 95, 90, 84, 80, 75, 71, 66, 63, 59, 56,
+  52, 49, 46, 44, 41, 39, 37, 34, 32, 31, 29, 27, 26, 24, 23, 21,
+  20, 19, 18, 17, 16, 15, 14, 13, 12, 12, 11, 10, 10, 9, 9, 8
+};
+
 struct dac_cv
 {
 	int32_t target = 0;
@@ -59,6 +72,16 @@ int16_t bend = 0;
 uint8_t playing = 1; // Default clock on makes us respond to clock pulses after reset
 
 MIDI_CREATE_DEFAULT_INSTANCE();
+
+inline int32_t LPF_32bit(int32_t current, int32_t target, uint16_t alpha) {
+  int32_t diff = target - current;
+  
+  // Cast to 64-bit for the multiplication to prevent overflow
+  // (32-bit diff * 15-bit alpha exceeds 32-bit capacity)
+  int32_t delta = (int32_t)(((int64_t)diff * alpha) >> 15);
+  
+  return current + delta;
+}
 
 void setup()
 {
@@ -283,8 +306,14 @@ ISR(TIMER2_COMPA_vect) // 2KHz update freq.
 	write_dac(CV_2.target, DAC_CHANNEL_B);
 
 	// Do note glide
-  int32_t glide = 1 + (analogRead(A0) << 4);
-  CV_1.current += (CV_1.target - CV_1.current) / glide;
+  uint8_t glide = analogRead(A0) >> 3; 
+  uint16_t alpha = pgm_read_word(&glideAlphaTable[glide]);
+
+  if (glide != 0 && CV_1.current != CV_1.target) {
+    CV_1.current = LPF_32bit(CV_1.current, CV_1.target, alpha);
+  } else {
+    CV_1.current = CV_1.target;
+  }
 }
 
 void loop()
